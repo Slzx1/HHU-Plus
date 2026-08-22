@@ -174,4 +174,4 @@ npm test                  # node --test tests/*.test.js
 
 ## License
 
-> 仓库暂未附 LICENSE。开源前请补一份（如 MIT / Apache-2.0），文案与版权归原作者。
+> MIT
