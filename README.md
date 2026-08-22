@@ -174,4 +174,4 @@ npm test                  # node --test tests/*.test.js
 
 ## License
 
-> MIT
+> MIT（详见 `LICENSE` 文件，版权归原作者 ZiXuan Liu。）
