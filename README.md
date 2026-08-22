@@ -56,25 +56,46 @@ HHU+ 是面向河海大学在校生的课余开源项目，把校园里常用且
 
 ## 目录结构
 
+> 顶层按职能分四块：**`web/`（前端 + 引擎，也是 APK 打包的内容）**、**`server/` + `cli.js`（Web / CLI 后端）**、**`tests/`（测试）**、**其余（构建 / 文档 / 平台壳）**。
+
 ```
-web/                     # Capacitor webDir，APK 离线内容全在这
-  js/
-    config.js            # ★唯一常量源：学校域名/URL/课表时段/超时/节流。改学校接口只改这里。
-    engine/              # 抓取引擎：scraper(登录/导航/查询) + parser(纯解析,可单测)
-      scraper.js  parser.js
-    platform/            # 环境适配，统一 Backend 接口
-      apk.js  web.js  index.js
-    features/            # ★一功能一模块，自注册（加功能=加一个文件+index.js 登记一行）
-      index.js  grades.js  schedule.js  classroom.js  orlan.js
-    store.js  ui.js  icons.js  app.js     # 状态持久化 / UI 工具 / 图标 / 装配器
-  css/tokens.css  components.css
-server/                  # Web 模式后端（Node + Express）
-  server.js  node-env.js  session.js
-cli.js                   # CLI：读凭据/Cookie 回退 → 对齐表格 + GPA
-tests/                   # node --test 单测 + fixtures/*.html
-scripts/build-apk.sh/.bat  setup-android-sdk.sh  gen-doc-shots.mjs
-docs/                    # 文档与示例截图（模拟数据，不含真实信息）
-android/                 # Capacitor 生成壳（含自研 cookie 原生桥 MainActivity.java）
+web/                       # Capacitor webDir：APK 离线运行的全部内容都在这里
+├─ js/
+│  ├─ config.js            # ★ 唯一常量源：学校域名/URL/课表时段/超时/节流。改接口只改这里。
+│  ├─ engine/              # 抓取引擎（唯一实现，server / cli 也从此 import）
+│  │  ├─ scraper.js        #   登录 / 导航 / 查询 / 重试 / 会话过期判断
+│  │  └─ parser.js         #   纯解析函数（GPA/成绩/课表/列筛选）+ AES 加密，可单测
+│  ├─ platform/            # 环境适配，统一 Backend 接口
+│  │  ├─ apk.js            #   APK：原生 fetch + cookie 持久化 + InAppBrowser
+│  │  ├─ web.js            #   浏览器：fetch → Node 后端 /api
+│  │  └─ index.js          #   按运行环境挑选实现
+│  ├─ features/            # ★ 一功能一模块，自注册（加功能 = 加一个文件 + index 登记一行）
+│  │  ├─ index.js          #   功能注册表
+│  │  └─ grades.js  schedule.js  classroom.js  orlan.js
+│  ├─ store.js             # localStorage 状态（会话/缓存/节流/凭据）
+│  ├─ ui.js                # toast / 错误 / 加载 / 下拉 等通用件
+│  ├─ icons.js             # Material 风格 SVG 图标
+│  └─ app.js               # 装配器：注册功能、选平台、登录/会话编排（薄）
+└─ css/                    # tokens.css（设计变量）+ components.css（组件样式）
+
+server/                    # Web 模式后端（Node + Express）
+├─ server.js               # 静态 web + /api/* + 统一错误处理
+├─ node-env.js             # 注入 DOM 解析器(linkedom) + 带 cookie jar 的 fetch
+└─ session.js              # 会话存储（内存 + TTL）
+
+cli.js                     # CLI：读凭据 / Cookie 回退 → 对齐表格 + GPA
+
+tests/                     # node --test 单测
+├─ fixtures/*.html         #   学校页面结构样本（CAS 登录 / 成绩 / 课表）
+└─ *.test.js               #   解析 / AES / 表单提取 单测
+
+scripts/                   # 构建与工具
+├─ build-apk.sh  build-apk.bat   # Mac / Windows 构建 APK
+├─ setup-android-sdk.sh          # 一次性：安装 Android SDK
+└─ gen-doc-shots.mjs             # 重新生成 README 示例截图
+
+docs/                      # 文档与示例截图（模拟数据，不含真实信息）
+android/                   # Capacitor 生成壳（含自研 cookie 原生桥 MainActivity.java）
 ```
 
 ## 快速开始
