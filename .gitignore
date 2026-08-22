@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+
+# 构建产物 / 本地缓存（APK 每次由 Capacitor + Gradle 生成，不入库）
+web/dist/
+android/build/
+android/app/build/
+android/.gradle/
+android/.kotlin/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+
+# Android SDK / Gradle user home（平台相关、体积大，绝不入库）
+.android-sdk/
+.gradle-home/
+
+# APK / 图标中间产物
+*.apk
+android/app/src/main/assets/
+
+# 敏感配置
+.env
+
+# 视觉 QA 截图产物
+scripts/shots/
+
+# 系统 / IDE
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,16 @@
+{
+  "appId": "com.hhu.gradequery",
+  "appName": "HHU+",
+  "webDir": "web",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "CapacitorCookies": {
+      "enabled": true
+    }
+  }
+}

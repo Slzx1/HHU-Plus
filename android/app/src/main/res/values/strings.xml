@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">HHU+</string>
+    <string name="title_activity_main">HHU+</string>
+    <string name="package_name">com.hhu.hhuplus</string>
+    <string name="custom_url_scheme">com.hhu.hhuplus</string>
+</resources>

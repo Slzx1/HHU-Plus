@@ -1,0 +1,27 @@
+{
+  "name": "hhu-plus",
+  "version": "2.0.0",
+  "description": "河海大学信息门户手机版 HHU+（课表 / 成绩 / 办事大厅 / 奥兰系统）。纯 JS，单引擎三端复用。",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "server": "node server/server.js",
+    "start": "node server/server.js",
+    "cli": "node cli.js",
+    "cap:add": "npx cap add android",
+    "cap:sync": "npx cap sync android",
+    "build:apk": "./scripts/build-apk.sh"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/inappbrowser": "^4.0.1",
+    "express": "^4.19.0",
+    "linkedom": "^0.18.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
+    "playwright-core": "^1.62.1"
+  }
+}

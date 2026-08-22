@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1a73e8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>HHU+</title>
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+  <!-- ========== 登录视图 ========== -->
+  <section id="login-view" class="view active">
+    <div class="login-container">
+      <div class="logo">
+        <img class="logo-icon" src="icons/icon-192.png" alt="HHU+">
+        <h1>HHU+</h1>
+        <p class="subtitle">输入校园网账号密码登录</p>
+      </div>
+      <form id="login-form" class="form" autocomplete="off">
+        <div class="field">
+          <label for="username">学号</label>
+          <input type="text" id="username" name="username" placeholder="请输入学号" inputmode="numeric" required>
+        </div>
+        <div class="field">
+          <label for="password">密码</label>
+          <input type="password" id="password" name="password" placeholder="请输入密码" required>
+        </div>
+        <label class="checkbox-item">
+          <input type="checkbox" id="auto-login">
+          <span>自动登录（本地保存账号密码）</span>
+        </label>
+        <div id="login-error" class="error-msg" hidden></div>
+        <button type="submit" id="login-btn" class="btn btn-primary btn-block">
+          <span class="btn-text">登录</span>
+          <span class="btn-spinner" hidden></span>
+        </button>
+      </form>
+      <p class="hint">提示：勾选自动登录后，账号密码将保存在本机，30 分钟内重启不重复登录</p>
+    </div>
+  </section>
+
+  <!-- ========== 主视图 ========== -->
+  <section id="main-view" class="view">
+    <header class="navbar">
+      <h1 class="navbar-title">HHU+</h1>
+      <button id="logout-btn" class="btn-text">退出</button>
+    </header>
+    <main id="content" class="content"></main>
+    <nav id="bottom-nav" class="bottom-nav"></nav>
+  </section>
+
+  <!-- ========== Toast ========== -->
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- 唯一入口：ES module。tab/面板由 app.js 按 feature 注册表动态生成 -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
