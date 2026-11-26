@@ -1,17 +1,13 @@
 // ============ 核心解析层（纯函数，可单测） ============
-// 这些函数不含网络请求、不依赖全局环境，只做「HTML/文本 -> 结构化数据」。
-// 为了让同一份代码在浏览器（DOMParser）与 Node（linkedom）都能跑，
-// 每个需要 DOM 的函数都接收一个已注入的 `parse` 工厂（见 engine/scraper.js 的装配）。
-//
-// ✅ 之所以单独拆成一个文件：解析逻辑最容易因学校页面结构变化而失效，
-//    独立成纯函数后可用 tests/fixtures/*.html 做回归单测。
+// 不含网络请求、不依赖全局 DOM，只做「HTML/JSON/URL -> 结构化数据」与 AES 加密。
+// 需要 DOM 的函数接收注入的 `parse` 工厂（浏览器用 DOMParser，Node 用 linkedom）。
 
 import {
-  ENCRYPT_CHARS, WANTED_COLUMNS, SCHEDULE_SECTIONS,
-  SCHEDULE_TABLE_ID, DATA_LIST_TABLE_ID, KKSJ_FIELD,
+  ENCRYPT_CHARS, WANTED_COLUMNS, SCHEDULE_SECTIONS, SECTION_RANGES,
+  SCHEDULE_TABLE_ID, DATA_LIST_TABLE_ID, KKSJ_FIELD, GRADE_LEVELS,
 } from '../config.js';
 
-// ---- GPA 文本块各指标的正则 ----
+// ---- GPA 文本块各指标正则 ----
 const GPA_PATTERNS = {
   '学位绩点': /学位绩点[:：]\s*([\d.?]+)/,
   '出国就业平均成绩': /出国就业平均成绩[:：]\s*([\d.]+)/,
@@ -26,7 +22,7 @@ const GPA_PATTERNS = {
 };
 
 // ---- AES-CBC 加密 ----
-/** 生成随机串。测试时可注入返回固定序列的 rng 以获得已知答案。 */
+/** 生成随机串。测试时可注入确定性 rng 以验证已知答案。 */
 function defaultRng(length) {
   let s = '';
   for (let i = 0; i < length; i++) {
@@ -35,8 +31,8 @@ function defaultRng(length) {
   return s;
 }
 
-/** Uint8Array -> base64（对应 Python base64.b64encode）。分块避免栈溢出。 */
-function uint8ToBase64(bytes) {
+/** Uint8Array -> base64。分块避免大数组 apply 栈溢出。 */
+export function uint8ToBase64(bytes) {
   let binary = '';
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
@@ -48,10 +44,6 @@ function uint8ToBase64(bytes) {
 /**
  * AES-CBC 加密密码（与学校 encrypt.js 一致：64 字符随机前缀 + 密码）。
  * 明文 = 随机前缀(64) + 密码；key = salt；IV = 16 字符随机串（不随密文传输）。
- * 返回 ciphertext 的 base64。
- * @param {string} password 明文密码
- * @param {string} salt 学校页面下发的 pwdEncryptSalt（16 字符）
- * @param {(n:number)=>string} [rng] 随机源，测试注入固定序列
  */
 export async function encryptPassword(password, salt, rng = defaultRng) {
   if (!salt) return password;
@@ -60,7 +52,6 @@ export async function encryptPassword(password, salt, rng = defaultRng) {
     'raw', new TextEncoder().encode(salt),
     { name: 'AES-CBC' }, false, ['encrypt'],
   );
-  // Web Crypto AES-CBC 默认 PKCS7 padding，与 pycryptodome 一致
   const cipher = await crypto.subtle.encrypt(
     { name: 'AES-CBC', iv: new TextEncoder().encode(rng(16)) },
     key, new TextEncoder().encode(plaintext),
@@ -68,19 +59,17 @@ export async function encryptPassword(password, salt, rng = defaultRng) {
   return uint8ToBase64(new Uint8Array(cipher));
 }
 
-// ---- 通用 DOM 工具 ----
+// ---- 通用文本 / DOM 工具 ----
 function textOf(el) { return (el?.textContent || '').replace(/\s+/g, ' ').trim(); }
 
 /**
  * 从原始 HTML 提取纯文本（剥掉所有标签 + 解码常见 HTML 实体 + 压空白）。
- * 不依赖 DOM 解析器 —— 某些解析器（如 linkedom）对嵌套标签的文本提取不可靠
- * （实测 doc.body.textContent 对 `<div><font>…</font></div>` 返回空），
- * 而 GPA 文本块正是这种嵌套结构，所以这里直接用原始 HTML 剥标签，浏览器/Node 行为一致。
+ * 必须使用剥标签实现而非 DOM textContent：linkedom 对嵌套 `<font>` 等结构会返回空串。
  */
-function stripHtmlText(html) {
+export function stripHtmlText(html) {
   return String(html)
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')        // 先剔除脚本/样式内容
-    .replace(/<[^>]+>/g, ' ')                                // 剥掉所有标签
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
@@ -100,6 +89,33 @@ export function parseGpaInfo(html) {
     if (m) info[key] = m[1].trim();
   }
   return info;
+}
+
+// ---- 成绩分级（同时支持数字成绩与中文等级成绩） ----
+const TEXT_GRADE_MAP = [
+  [/优秀|优|A\+?|免修/i, 'excellent'],
+  [/良好|良|B\+?/i, 'good'],
+  [/中等|中|C\+?/i, 'fair'],
+  [/不及格|不通过|不合格|缺考|取消|作弊|违纪|^F$/i, 'fail'],
+  [/及格|通过|合格|^P$|^D$/i, 'pass'],
+];
+
+/**
+ * 将成绩字符串映射为梯度 key（excellent / good / fair / pass / fail / null）。
+ * 既支持百分制数字（如 92 / 85.5），也支持五级制/两级制中文成绩（如 优秀 / 良好 / 通过）。
+ */
+export function classifyGrade(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const n = parseFloat(raw);
+  if (!Number.isNaN(n) && /^-?\d+(?:\.\d+)?$/.test(raw)) {
+    for (const lv of GRADE_LEVELS) if (n >= lv.min) return lv.key;
+    return 'fail';
+  }
+  for (const [re, key] of TEXT_GRADE_MAP) {
+    if (re.test(raw)) return key;
+  }
+  return null;
 }
 
 // ---- 成绩表格解析 ----
@@ -129,12 +145,10 @@ export function selectColumns(headers, rows) {
   const indices = [];
 
   const findColumn = (key, excludes) => {
-    // 精确
     for (let i = 0; i < headers.length; i++) {
       if (used.has(i)) continue;
       if (headers[i] === key) return i;
     }
-    // 模糊
     for (let i = 0; i < headers.length; i++) {
       if (used.has(i)) continue;
       if (headers[i].includes(key) && !excludes.some((ex) => headers[i].includes(ex))) {
@@ -213,8 +227,6 @@ export function extractLoginForm(html, parse) {
     _eventId: 'submit', cllt: 'userNameLogin', dllt: 'generalLogin',
   };
 
-  // 只定位「用户名密码登录」表单（id=pwdFromId，或含 cllt=userNameLogin），
-  // 避免被手机动态码/二维码表单里的 captchaDiv 干扰
   let pwdForm = doc.querySelector('#pwdFromId');
   if (!pwdForm) {
     for (const form of doc.querySelectorAll('form')) {
@@ -233,13 +245,12 @@ export function extractLoginForm(html, parse) {
   }
   const execEl = root.querySelector('input[name="execution"]');
   if (execEl && execEl.getAttribute('value')) fields.execution = execEl.getAttribute('value');
-  // 兜底：从内联 JS 提取 salt
+
   if (!fields.pwdEncryptSalt) {
-    const m = html.match(/pwdEncryptSalt\s*=\s*"([A-Za-z0-9+/=]{16})"/);
+    const m = html.match(/pwdEncryptSalt\s*=\s*["']([A-Za-z0-9+/=]{16})["']/);
     if (m) fields.pwdEncryptSalt = m[1];
   }
 
-  // 仅在用户名密码表单内判断 captchaDiv 是否含 'hide' class
   let captchaRequired = false;
   const captchaDiv = root.querySelector('#captchaDiv');
   if (captchaDiv) {
@@ -271,19 +282,37 @@ export function parseDefaultSemester(doc) {
   return (opt.getAttribute('value') || '').trim() || null;
 }
 
+/**
+ * 从 weeks 字段解析小节起止范围，如 "1-16周[3-4节]" / "1-16周(3-4节)" / "3-4节" / "03-05节" -> { start, end }。
+ * 兼容方括号、圆括号、裸写与单节；无法解析时可回退到大节行对应范围，避免课程被静默丢弃。
+ */
+export function parseCourseSections(weeksStr, fallbackRowIdx = null) {
+  const m = String(weeksStr || '').match(/[\[(（]?\s*(\d+(?:\s*[-~–,、]\s*\d+)*)\s*节\s*[\])）]?/);
+  if (m) {
+    const nums = m[1]
+      .split(/[-~–,、]/)
+      .map((n) => parseInt(n.trim(), 10))
+      .filter((n) => !Number.isNaN(n) && n >= 1 && n <= 12);
+    if (nums.length) return { start: Math.min(...nums), end: Math.max(...nums) };
+  }
+  if (fallbackRowIdx != null && SECTION_RANGES[fallbackRowIdx]) {
+    return { ...SECTION_RANGES[fallbackRowIdx] };
+  }
+  return null;
+}
+
 /** 解析单个课表格子的课程列表。 */
 export function parseScheduleCell(td) {
   const courses = [];
-  // 只取 div.kbcontent（含教师信息更完整），跳过信息不全的 kbcontent1 与空占位
   for (const div of td.querySelectorAll('div.kbcontent')) {
     if ((div.getAttribute('id') || '').endsWith('-4')) continue;
     let current = {};
     for (const font of div.querySelectorAll('font')) {
       const style = font.getAttribute('style') || '';
-      if (style.includes('display') && style.includes('none')) continue;  // 跳过隐藏辅助信息
+      if (style.includes('display') && style.includes('none')) continue;
       const title = font.getAttribute('title') || '';
       const text = (font.textContent || '').trim();
-      if (!text || text === ' ') continue;
+      if (!text || text === '\u00a0') continue;
       if (!title) {
         if (Object.keys(current).length) courses.push(current);
         current = { name: text };
@@ -297,7 +326,7 @@ export function parseScheduleCell(td) {
 }
 
 /**
- * 解析课表 HTML。表格 <table id="timetable">：前 2 行是 banner/表头，
+ * 解析课表 HTML。<table id="timetable">：前 2 行是表头/说明，
  * 之后每行一个大节，每行 7 个 td（周一~周日），备注行为 colspan=7 整行。
  */
 export function parseSchedule(html, parse) {
@@ -326,5 +355,64 @@ export function parseSchedule(html, parse) {
     notes,
     defaultWeek: parseDefaultWeek(doc),
     defaultSemester: parseDefaultSemester(doc),
+  };
+}
+
+// ---- 通行码（zhjc.hhu.edu.cn）CAS Ticket 与接口解析 ----
+/**
+ * 从 CAS 重定向后的 URL 中提取 ticket 与 state。
+ * 例：https://zhjc.hhu.edu.cn/mobile/?state=CAS_MOBILE_ACCESS-LOGIN/%23/pages/wxCas/index&ticket=ST-xxx
+ */
+export function extractCasTicket(url) {
+  if (!url) return null;
+  let ticket = null;
+  let rawState = null;
+  try {
+    const parsed = new URL(url);
+    ticket = parsed.searchParams.get('ticket');
+    rawState = parsed.searchParams.get('state');
+  } catch { /* fallback to regex */ }
+
+  if (!ticket) {
+    const m = String(url).match(/[?&]ticket=([^&#]+)/);
+    if (m) ticket = decodeURIComponent(m[1]);
+  }
+  if (!rawState) {
+    const m = String(url).match(/[?&]state=([^&#]+)/);
+    if (m) rawState = decodeURIComponent(m[1]);
+  }
+  if (!ticket) return null;
+  const state = (rawState ? rawState.split('-')[0] : '') || 'CAS_MOBILE_ACCESS';
+  return { ticket, state };
+}
+
+/** 解析 zhjc `/admin/accessPerson/mobile/freshAccessQrCode` 返回的数据。 */
+export function parseZhjcQrResponse(payload) {
+  const data = payload?.data ?? payload;
+  if (!data || (!data.qrCodeImage && !data.qrCodeContent)) {
+    throw new Error(payload?.msg || '未能获取通行码数据');
+  }
+  const cleanB64 = data.qrCodeImage ? String(data.qrCodeImage).replace(/[\r\n\s]/g, '') : '';
+  const qrCodeImage = cleanB64
+    ? (cleanB64.startsWith('data:image/') ? cleanB64 : `data:image/png;base64,${cleanB64}`)
+    : '';
+  const expireTime = Number(data.expireTime) || (Date.now() + 60_000);
+  return {
+    qrCodeContent: data.qrCodeContent || '',
+    qrCodeImage,
+    expireTime,
+  };
+}
+
+/** 解析 zhjc `/admin/accessPerson/mobile/loginUserBaseInfo` 返回的用户信息。 */
+export function parseZhjcUserInfo(payload) {
+  const data = payload?.data ?? payload ?? {};
+  return {
+    name: data.name || '',
+    dept: data.shortDeptName || data.deptName || '',
+    code: data.code || '',
+    phone: data.phone || '',
+    photoFileId: data.photoFileId || '',
+    id: data.id || '',
   };
 }

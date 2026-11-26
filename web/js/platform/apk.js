@@ -1,66 +1,89 @@
 // ============ APK 模式 Backend（离线，无服务器） ============
-// 直接用抓取引擎在 WebView 里完成 CAS 登录 + 查询，全部离线。
-// 依赖 Capacitor 原生桥：
-//   - CapacitorHttp.enabled=true 后全局 fetch 走 native OkHttp（自动 cookie jar、绕过 CORS、跟随 3xx）
-//   - window.Capacitor.Plugins 提供 CapacitorCookies / InAppBrowser
-//   - 自研 `window.HHUCookieHelper.getCookiesForUrl(url)` 读取任意域 cookie（见 MainActivity.java）
-//   - `window.CapacitorCookiesAndroidInterface.setCookie(url, setCookie)` 写回 persistent cookie
+// 直接在 WebView 里运行同一份抓取引擎完成 CAS 登录 / 课表 / 成绩 / 通行码，
+// 并借助自研 MainActivity Cookie 桥接（HHUCookieHelper）与 InAppBrowser 实现
+// 「一次登录、全功能免重登、清后台重开仍保持登录态」。
 
-import { CLASSROOM_URL, ORLAN_URL } from '../config.js';
+import {
+  CLASSROOM_URL, ORLAN_HOME_URL, ZHJC_CAS_URL, MOBILE_UA, APK_COOKIE_URLS,
+} from '../config.js';
 import { createScraper } from '../engine/scraper.js';
 import { store } from '../store.js';
 
 function cap() { return window.Capacitor; }
-function isNative() { return !!cap()?.isNativePlatform?.(); }
 function plugin(name) { return cap()?.Plugins?.[name]; }
 
-// ---- 原生 fetch（Capacitor patch 过后） ----
-// 契约：返回 { status, url, text }，body 只读一次
-async function nativeFetch(method, url, opts) {
-  const resp = await fetch(url, opts);
+// ---- 原生 fetch（CapacitorHttp patch 后走 OkHttp，自动管理 Cookie、绕过 CORS） ----
+async function nativeFetch(method, url, opts = {}) {
+  const fetchOpts = {
+    method: opts.method || method,
+    headers: opts.headers,
+    body: opts.body,
+    credentials: 'include',
+    redirect: 'follow',
+  };
+  const resp = await fetch(url, fetchOpts);
+  if (opts.responseType === 'bytes') {
+    const ab = await resp.arrayBuffer();
+    return { status: resp.status, url: resp.url || url, text: '', bytes: new Uint8Array(ab) };
+  }
   const text = await resp.text();
   return { status: resp.status, url: resp.url || url, text };
 }
 
-// ---- cookie 持久化：登录后/每次请求后/InAppBrowser 导航后写回 localStorage ----
+// ---- 多域 / 多路径 Cookie 持久化（含 CASTGC / WebVPN / JWXT / TaskCenter / SMST / ZHJC） ----
 async function saveCookies() {
   const helper = window.HHUCookieHelper;
   if (!helper || typeof helper.getCookiesForUrl !== 'function') return;
   try {
-    const cookies = {
-      webvpn: helper.getCookiesForUrl('https://webvpn.hhu.edu.cn') || '',
-      smst: helper.getCookiesForUrl('https://smst.hhu.edu.cn') || '',   // 奥兰系统域，含设备类型标记
-    };
-    store.saveSavedCookies(JSON.stringify(cookies));
+    const snapshot = {};
+    for (const item of APK_COOKIE_URLS) {
+      snapshot[item.key] = helper.getCookiesForUrl(item.url) || '';
+    }
+    store.saveSavedCookies(JSON.stringify(snapshot));
+    if (typeof helper.flushCookies === 'function') helper.flushCookies();
   } catch (e) { console.warn('保存 cookie 失败:', e.message); }
 }
 
-/** APP 启动时调用：把持久化的 cookie 改写为 persistent cookie 写回 native store，
- *  使其绕过 CapacitorCookies.load() 的 removeSessionCookies()，从而重启免登录。 */
+/**
+ * APP 启动时恢复持久化 Cookie（写回持久化 Expires 绕过 CapacitorCookies 的 removeSessionCookies），
+ * 并按原域与原路径写回后立即 flush 落盘，保证重启后课表/成绩/通行码/办事大厅/奥兰全部免重登。
+ */
 async function restoreCookies() {
+  const savedToken = store.loadZhjcToken();
+  if (savedToken) Scraper.setZhjcToken(savedToken);
+
   const data = store.loadSavedCookies();
   if (!data.cookies) return false;
+  const helper = window.HHUCookieHelper;
   const capInterface = window.CapacitorCookiesAndroidInterface;
-  if (!capInterface) return false;
+  const setOne = (url, value) => {
+    if (helper && typeof helper.setCookie === 'function') helper.setCookie(url, value);
+    else if (capInterface && typeof capInterface.setCookie === 'function') capInterface.setCookie(url, value);
+  };
+  if (!helper?.setCookie && !capInterface?.setCookie) return false;
 
-  // 兼容旧格式（纯字符串）与新格式（{webvpn, smst}）
-  let cookies;
+  // 兼容旧格式（纯字符串或 {webvpn, smst}）与新格式（全量 APK_COOKIE_URLS）
+  let snapshot;
   try {
-    cookies = JSON.parse(data.cookies);
-    if (typeof cookies === 'string') cookies = { webvpn: cookies, smst: '' };
-  } catch { cookies = { webvpn: data.cookies, smst: '' }; }
+    snapshot = JSON.parse(data.cookies);
+    if (typeof snapshot === 'string') snapshot = { webvpn: snapshot };
+  } catch { snapshot = { webvpn: data.cookies }; }
 
   const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toUTCString();
   let restored = 0;
-  for (const [url, csv] of [['https://webvpn.hhu.edu.cn', cookies.webvpn], ['https://smst.hhu.edu.cn', cookies.smst]]) {
+  for (const item of APK_COOKIE_URLS) {
+    const csv = snapshot[item.key];
     if (!csv) continue;
     for (const pair of csv.split(';')) {
       const trimmed = pair.trim();
       if (!trimmed) continue;
-      try { capInterface.setCookie(url, `${trimmed}; Expires=${expires}; Path=/`); restored++; }
-      catch (e) { console.warn('恢复 cookie 失败:', e.message); }
+      try {
+        setOne(item.url, `${trimmed}; Expires=${expires}; Path=${item.path}`);
+        restored++;
+      } catch (e) { console.warn(`恢复 ${item.key} cookie 失败:`, e.message); }
     }
   }
+  if (typeof helper?.flushCookies === 'function') helper.flushCookies();
   return restored > 0;
 }
 
@@ -69,59 +92,63 @@ async function clearNativeCookies() {
     if (plugin('CapacitorCookies')?.clearAllCookies) await plugin('CapacitorCookies').clearAllCookies();
   } catch { /* 忽略 */ }
   store.clearSavedCookies();
+  store.saveZhjcToken(null);
+  Scraper.setZhjcToken(null);
 }
 
-// ---- 抓取引擎（浏览器环境：DOMParser + Capacitor 原生 fetch + cookie 持久化钩子） ----
+// ---- 抓取引擎（浏览器 DOMParser + Capacitor 原生 fetch + Cookie/Token 持久化钩子） ----
 const Scraper = createScraper({
   parse: (html) => new DOMParser().parseFromString(html, 'text/html'),
   fetchImpl: nativeFetch,
-  onResponse: () => saveCookies(),   // 每次非登录页请求后同步 cookie
+  onResponse: () => saveCookies(),
+  onZhjcToken: (token) => store.saveZhjcToken(token),
 });
 
-// ---- InAppBrowser 内嵌 WebView（办事大厅 / 奥兰系统） ----
-function openWebView(url, userAgent) {
+// ---- InAppBrowser 内嵌 WebView（办事大厅 / 奥兰系统 / 官方门禁页） ----
+function openWebView(url, userAgent = MOBILE_UA) {
   const InAppBrowser = plugin('InAppBrowser');
   if (!InAppBrowser || typeof InAppBrowser.openInWebView !== 'function') {
     throw new Error('InAppBrowser 插件未注册，请运行 npx cap sync 后重新构建 APK');
   }
   InAppBrowser.removeAllListeners();
-  // isIsolated:false 使 InAppBrowser 与主 WebView 共享 CookieManager，
-  // 导航完成后的 smst/webvpn cookie 才能被 saveCookies 读到
+  // isIsolated:false 共享主 WebView 的 CookieManager，实现一次登录免重登
   InAppBrowser.addListener('browserPageNavigationCompleted', async () => { await saveCookies(); });
   const opening = InAppBrowser.openInWebView({
     url,
     options: {
-      showURL: false, showToolbar: true,
-      clearCache: false, clearSessionCache: false,      // 保留 cookie，下次免登录
+      showURL: false,
+      showToolbar: true,
+      clearCache: false,
+      clearSessionCache: false,
       mediaPlaybackRequiresUserAction: true,
-      closeButtonText: '关闭', toolbarPosition: 0,      // TOP
-      showNavigationButtons: true, leftToRight: false,
+      closeButtonText: '返回',
+      toolbarPosition: 0,
+      showNavigationButtons: true,
+      leftToRight: false,
       ...(userAgent ? { customWebViewUserAgent: userAgent } : {}),
       android: { allowZoom: true, hardwareBack: true, pauseMedia: true, isIsolated: false },
       iOS: { allowOverScroll: true, viewStyle: 2, allowsBackForwardNavigationGestures: true },
     },
   });
-  // 导航链后期才写入的 smst 设备标记 cookie 会晚于 pageCompleted 产生，
-  // 延后再存几次，确保奥兰"二次打开变桌面版"的标记 cookie 被持久化
+  // 延迟再次保存 cookie，捕获奥兰 smst 设备标记等异步写入 cookie，避免二次打开变桌面版
   [800, 2500].forEach((ms) => setTimeout(() => saveCookies(), ms));
   return opening;
 }
 
-// 移动版 UA：让奥兰/办事大厅等外链返回手机版界面（而非桌面版）
-const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
-
 export const backend = {
   isNative: () => true,
 
+  async restoreSession() {
+    await restoreCookies();
+    return true;
+  },
+
   async login(username, password) {
-    // 登录前清掉可能被污染的匿名 session cookie，避免 CAS 直接返回登录页
     await clearNativeCookies();
     await Scraper.casLogin(username, password);
     await Scraper.navigate();
     const { semesters, defaultSemester } = await Scraper.getSemesters();
     await saveCookies();
-    // 伪 session_id：APK 无后端，仅用于前端状态判断
     return { sessionId: 'local_' + Date.now(), semesters: semesters || [], defaultSemester };
   },
 
@@ -139,16 +166,31 @@ export const backend = {
     return { schedule };
   },
 
-  async logout() {
+  async queryPassCode({ refreshUser = false } = {}) {
+    // 确保原生 CookieManager 对 zhjc.hhu.edu.cn 持有 tenantId=1，避免 CapacitorHttp 覆盖手动 Cookie 头
     try {
-      if (plugin('CapacitorCookies')?.clearAllCookies) await plugin('CapacitorCookies').clearAllCookies();
+      const helper = window.HHUCookieHelper;
+      const capIf = window.CapacitorCookiesAndroidInterface;
+      const c = 'tenantId=1; Path=/';
+      if (helper?.setCookie) helper.setCookie('https://zhjc.hhu.edu.cn/', c);
+      else if (capIf?.setCookie) capIf.setCookie('https://zhjc.hhu.edu.cn/', c);
     } catch { /* 忽略 */ }
-    store.clearSavedCookies();
+    return Scraper.queryPassCode({ refreshUser });
   },
 
-  restoreCookies,   // 供 app.js 启动时调用
+  async logout() {
+    await clearNativeCookies();
+  },
+
+  restoreCookies,
   saveCookies,
 
-  async openClassroom() { await openWebView(CLASSROOM_URL, MOBILE_UA); },   // 办事大厅也用移动 UA
-  async openOrlan() { await openWebView(ORLAN_URL, MOBILE_UA); },
+  getProxyUrl: () => null,
+  async openClassroom() { await openWebView(CLASSROOM_URL, MOBILE_UA); },
+  async openOrlan() {
+    // 先静默完成奥兰 CAS 票据握手并落盘 cookie，再直开 ORLAN_HOME_URL 跳过 login.aspx
+    try { await Scraper.ensureOrlanSession(); await saveCookies(); } catch { /* 降级仍尝试打开 */ }
+    await openWebView(ORLAN_HOME_URL, MOBILE_UA);
+  },
+  async openPassCodeWeb() { await openWebView(ZHJC_CAS_URL, MOBILE_UA); },
 };

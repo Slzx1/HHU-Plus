@@ -1,7 +1,7 @@
 {
   "name": "hhu-plus",
-  "version": "2.0.0",
-  "description": "河海大学信息门户手机版 HHU+（课表 / 成绩 / 办事大厅 / 奥兰系统）。纯 JS，单引擎三端复用。",
+  "version": "3.0.0",
+  "description": "河海大学一站式校园助手 HHU+（课表 / 成绩 / 校园通行码 / 办事大厅 / 奥兰系统）。纯 JS，一次登录全功能免重登，单引擎三端复用。",
   "private": true,
   "type": "module",
   "scripts": {

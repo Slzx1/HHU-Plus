@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#1a73e8">
+  <meta name="description" content="HHU+ 河海大学一站式校园助手：一次登录畅用课表查询、学业成绩、校园通行码、办事大厅与奥兰系统。">
+  <meta name="theme-color" content="#0f5fa8">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <title>HHU+</title>
+  <title>HHU+ · 河海大学校园助手</title>
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -15,50 +16,107 @@
 </head>
 <body>
   <!-- ========== 登录视图 ========== -->
-  <section id="login-view" class="view active">
+  <section id="login-view" class="view active" aria-label="登录">
+    <div class="login-backdrop" aria-hidden="true">
+      <svg class="login-wave" viewBox="0 0 1440 220" preserveAspectRatio="none">
+        <path d="M0,128 C280,196 520,64 820,124 C1120,184 1280,104 1440,140 L1440,0 L0,0 Z"/>
+      </svg>
+    </div>
+
+    <div class="login-topbar">
+      <button type="button" class="icon-btn theme-toggle-btn" aria-label="切换主题"></button>
+    </div>
+
     <div class="login-container">
-      <div class="logo">
-        <img class="logo-icon" src="icons/icon-192.png" alt="HHU+">
-        <h1>HHU+</h1>
-        <p class="subtitle">输入校园网账号密码登录</p>
+      <div class="login-card">
+        <div class="logo">
+          <img class="logo-icon" src="icons/icon-192.png" alt="HHU+ 图标">
+          <h1>HHU+</h1>
+          <p class="subtitle">河海大学统一身份认证 · 一次登录畅用全校服务</p>
+        </div>
+
+        <form id="login-form" class="form" autocomplete="on">
+          <div class="field">
+            <label for="username">学号 / 工号</label>
+            <input type="text" id="username" name="username" placeholder="请输入校园网学号" inputmode="numeric" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label for="password">统一认证密码</label>
+            <div class="input-password-wrap">
+              <input type="password" id="password" name="password" placeholder="请输入密码" autocomplete="current-password" required>
+              <button type="button" id="toggle-password" class="input-action-btn" aria-label="显示密码"></button>
+            </div>
+          </div>
+
+          <label class="checkbox-item">
+            <input type="checkbox" id="auto-login">
+            <span>保持登录状态（本机保存凭据，认证过期时自动续期）</span>
+          </label>
+
+          <div id="login-error" class="error-msg" hidden></div>
+
+          <button type="submit" id="login-btn" class="btn btn-primary btn-block">
+            <span class="btn-text">登录 HHU+</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+        </form>
+
+        <div class="login-capabilities">
+          <span>课表</span>
+          <span>成绩</span>
+          <span>通行码</span>
+          <span>办事大厅</span>
+          <span>奥兰系统</span>
+        </div>
       </div>
-      <form id="login-form" class="form" autocomplete="off">
-        <div class="field">
-          <label for="username">学号</label>
-          <input type="text" id="username" name="username" placeholder="请输入学号" inputmode="numeric" required>
-        </div>
-        <div class="field">
-          <label for="password">密码</label>
-          <input type="password" id="password" name="password" placeholder="请输入密码" required>
-        </div>
-        <label class="checkbox-item">
-          <input type="checkbox" id="auto-login">
-          <span>自动登录（本地保存账号密码）</span>
-        </label>
-        <div id="login-error" class="error-msg" hidden></div>
-        <button type="submit" id="login-btn" class="btn btn-primary btn-block">
-          <span class="btn-text">登录</span>
-          <span class="btn-spinner" hidden></span>
-        </button>
-      </form>
-      <p class="hint">提示：勾选自动登录后，账号密码将保存在本机，30 分钟内重启不重复登录</p>
+
+      <p class="hint">凭据仅用于河海大学官方统一身份认证，绝不上传至任何第三方服务器</p>
     </div>
   </section>
 
-  <!-- ========== 主视图 ========== -->
-  <section id="main-view" class="view">
-    <header class="navbar">
-      <h1 class="navbar-title">HHU+</h1>
-      <button id="logout-btn" class="btn-text">退出</button>
-    </header>
-    <main id="content" class="content"></main>
-    <nav id="bottom-nav" class="bottom-nav"></nav>
+  <!-- ========== 主应用视图 ========== -->
+  <section id="main-view" class="view" aria-label="主界面">
+    <div class="app-shell">
+      <!-- 桌面端左侧导航栏 -->
+      <aside class="side-rail" aria-label="主导航">
+        <div class="rail-brand">
+          <img src="icons/icon-192.png" alt="HHU+" class="rail-logo">
+          <div>
+            <div class="rail-title">HHU+</div>
+            <div class="rail-sub">河海校园助手</div>
+          </div>
+        </div>
+        <nav id="side-nav" class="rail-nav"></nav>
+      </aside>
+
+      <!-- 右侧主体（顶部栏 + 内容区） -->
+      <div class="app-main">
+        <header class="navbar">
+          <div class="navbar-left">
+            <img src="icons/icon-32.png" alt="" class="navbar-logo" aria-hidden="true">
+            <h2 id="navbar-title" class="navbar-title">我的课表</h2>
+          </div>
+          <div class="navbar-actions">
+            <span id="user-badge" class="user-badge tabular-nums" hidden></span>
+            <button type="button" class="icon-btn navbar-icon-btn theme-toggle-btn" aria-label="切换主题"></button>
+            <button type="button" id="logout-btn" class="navbar-logout-btn" aria-label="退出登录"></button>
+          </div>
+        </header>
+
+        <main id="content" class="content"></main>
+      </div>
+    </div>
+
+    <!-- 移动端底部导航栏（5 tab） -->
+    <nav id="bottom-nav" class="bottom-nav" aria-label="功能切换"></nav>
   </section>
 
-  <!-- ========== Toast ========== -->
-  <div id="toast" class="toast" hidden></div>
+  <!-- ========== 通用模态抽屉 ========== -->
+  <div id="modal-overlay" class="modal-overlay" hidden></div>
 
-  <!-- 唯一入口：ES module。tab/面板由 app.js 按 feature 注册表动态生成 -->
+  <!-- ========== 轻提示 Toast ========== -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
